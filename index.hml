@@ -1,0 +1,150 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deriv Edge</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0b1120;color:#e5e7eb;font-family:Arial,sans-serif}
+header{padding:20px;background:#111827;border-bottom:1px solid #273244}
+h1{margin:0;color:#38bdf8}
+small{color:#9ca3af}
+main{padding:15px;max-width:900px;margin:auto}
+.card{background:#111827;border:1px solid #263244;border-radius:14px;padding:16px;margin:12px 0}
+.price{font-size:32px;font-weight:bold;color:#fff}
+button,select{background:#1e293b;color:white;border:1px solid #475569;border-radius:8px;padding:10px}
+.signal{font-size:25px;font-weight:bold;margin:10px 0}
+.green{color:#4ade80}.red{color:#fb7185}.yellow{color:#facc15}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+canvas{width:100%;height:200px;background:#0b1120;border-radius:10px}
+</style>
+</head>
+<body>
+<header>
+<h1>DERIV EDGE</h1>
+<small>Market Analysis Dashboard · Analysis only</small>
+</header>
+<main>
+<div class="card">
+<h3>Market</h3>
+<select id="market">
+<option value="R_75">Volatility 75 Index</option>
+<option value="R_100">Volatility 100 Index</option>
+<option value="R_50">Volatility 50 Index</option>
+<option value="R_25">Volatility 25 Index</option>
+</select>
+<select id="tf">
+<option value="60">1 Minute</option>
+<option value="120">2 Minutes</option>
+<option value="300">5 Minutes</option>
+<option value="900">15 Minutes</option>
+</select>
+<p id="connection" class="yellow">Connecting...</p>
+<div class="price" id="price">--</div>
+<small id="ticktime">Waiting for live data...</small>
+</div>
+<div class="card">
+<h3>Live Candlestick Data</h3>
+<canvas id="chart"></canvas>
+</div>
+<div class="card">
+<h3>Technical Analysis</h3>
+<div id="analysis">Waiting for market data...</div>
+</div>
+<div class="card">
+<h3>Deriv Edge Signal</h3>
+<div id="signal" class="signal yellow">WAIT</div>
+<div id="reason">Collecting live ticks and candle data.</div>
+<p id="score">Signal strength: --</p>
+</div>
+<div class="card">
+<h3>Risk Calculator</h3>
+<label>Account balance:</label>
+<input id="balance" type="number" value="100" min="0" style="padding:10px;width:100%;margin:8px 0">
+<label>Risk per trade (%):</label>
+<input id="risk" type="number" value="1" min="0" max="2" step="0.1" style="padding:10px;width:100%;margin:8px 0">
+<button onclick="calc()">Calculate risk</button>
+<p id="riskresult">Suggested risk: --</p>
+</div>
+<div class="card">
+<h3>Safety</h3>
+<p>Signals are analytical estimates, not guaranteed predictions. Synthetic indices can move unpredictably. Practice using a demo account.</p>
+</div>
+</main>
+<script>
+let ws,prices=[],candles=[],lastPrice=null;
+const $=id=>document.getElementById(id);
+function connect(){
+if(ws)ws.close();
+$("connection").textContent="Connecting...";
+ws=new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+ws.onopen=()=>{ $("connection").textContent="Connected · Live data"; $("connection").className="green"; subscribe();};
+ws.onmessage=e=>{
+let d=JSON.parse(e.data);
+if(d.tick){
+lastPrice=d.tick.quote;
+prices.push(lastPrice);
+if(prices.length>300)prices.shift();
+$("price").textContent=lastPrice;
+$("ticktime").textContent="Live tick received";
+analyse();
+}
+if(d.candles){candles=d.candles;draw();}
+if(d.candle){candles.push(d.candle);if(candles.length>200)candles.shift();draw();}
+};
+ws.onerror=()=>{$("connection").textContent="Connection error";$("connection").className="red";};
+ws.onclose=()=>{$("connection").textContent="Disconnected";$("connection").className="red";};
+}
+function subscribe(){
+ws.send(JSON.stringify({ticks:$("market").value,subscribe:1}));
+ws.send(JSON.stringify({ticks_history:$("market").value,count:100,end:"latest",style:"candles",granularity:Number($("tf").value)}));
+ws.send(JSON.stringify({candles:$("market").value,granularity:Number($("tf").value),subscribe:1}));
+}
+function avg(a,n){if(a.length<n)return null;return a.slice(-n).reduce((x,y)=>x+y,0)/n;}
+function rsi(a,n=14){
+if(a.length<=n)return null;
+let up=0,down=0;
+for(let i=a.length-n;i<a.length;i++){let diff=a[i]-a[i-1];if(diff>0)up+=diff;else down-=diff;}
+if(down===0)return 100;
+return 100-100/(1+up/down);
+}
+function analyse(){
+if(prices.length<30)return;
+let e9=avg(prices,9),e21=avg(prices,21),e50=avg(prices,50),rv=rsi(prices);
+let trend=e9>e21?"Bullish":"Bearish";
+let momentum=prices[prices.length-1]>prices[prices.length-5]?"Up":"Down";
+let votes=0;if(e9>e21)votes++;else votes--;if(e21>e50)votes++;else votes--;if(momentum==="Up")votes++;else votes--;
+let sig=votes>=2?"OVER":votes<=-2?"UNDER":"WAIT";
+$("analysis").innerHTML="EMA 9: "+e9.toFixed(4)+"<br>EMA 21: "+e21.toFixed(4)+"<br>EMA 50: "+(e50?e50.toFixed(4):"Collecting")+"<br>RSI 14: "+(rv?rv.toFixed(2):"Collecting")+"<br>Momentum: "+momentum+"<br>Trend: "+trend;
+$("signal").textContent=sig;
+$("signal").className="signal "+(sig==="OVER"?"green":sig==="UNDER"?"red":"yellow");
+$("reason").textContent="Rule-based directional vote from EMA alignment and recent momentum. Not a probability or guarantee.";
+$("score").textContent="Directional agreement: "+Math.round(Math.abs(votes)/3*100)+"% · "+votes+" of 3 votes";
+}
+function draw(){
+let c=$("chart"),ctx=c.getContext("2d");
+c.width=c.clientWidth;c.height=200;ctx.clearRect(0,0,c.width,c.height);
+if(!candles.length)return;
+let data=candles.slice(-40),max=Math.max(...data.map(x=>Number(x.high))),min=Math.min(...data.map(x=>Number(x.low))),range=max-min||1;
+let w=c.width/data.length;
+data.forEach((x,i)=>{
+let o=Number(x.open),cl=Number(x.close),h=Number(x.high),l=Number(x.low);
+let y=v=>c.height-(v-min)/range*c.height;
+ctx.strokeStyle=cl>=o?"#4ade80":"#fb7185";ctx.fillStyle=ctx.strokeStyle;
+ctx.beginPath();ctx.moveTo(i*w+w/2,y(h));ctx.lineTo(i*w+w/2,y(l));ctx.stroke();
+let top=y(Math.max(o,cl)),height=Math.max(2,Math.abs(y(o)-y(cl)));
+ctx.fillRect(i*w+2,top,Math.max(2,w-4),height);
+});
+}
+function calc(){
+let b=Number($("balance").value),r=Number($("risk").value);
+$("riskresult").textContent="Risk budget: "+(b*r/100).toFixed(2)+" (currency units) · "+r+"% of balance";
+}
+$("market").onchange=connect;
+$("tf").onchange=connect;
+connect();
+</script>
+</body>
+</html>
